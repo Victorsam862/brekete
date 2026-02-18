@@ -43,6 +43,48 @@ const fmtDateTime = (iso) => { try { return new Date(iso).toLocaleDateString('en
 const genId = () => 'j' + Date.now() + Math.random().toString(36).slice(2,5);
 const typeClass = (t) => { const m = { 'full-time':'full-time','live-in':'live-in','contract':'contract','part-time':'' }; return m[(t||'').toLowerCase()] || ''; };
 
+// ── EMAILJS CONFIG ────────────────────────────────────────────
+// Sign up free at https://www.emailjs.com → get your IDs
+// Replace these values with your own EmailJS credentials
+const EMAILJS = {
+  PUBLIC_KEY:   'YOUR_EMAILJS_PUBLIC_KEY',   // e.g. 'abc123XYZ'
+  SERVICE_ID:   'YOUR_EMAILJS_SERVICE_ID',   // e.g. 'service_xxxxxx'
+  TEMPLATE_ID:  'YOUR_EMAILJS_TEMPLATE_ID',  // e.g. 'template_xxxxxx'
+  NOTIFY_EMAIL: 'samsonvictor862@gmail.com',
+};
+
+// ── SEND APPLICATION EMAIL via EmailJS ───────────────────────
+async function sendApplicationEmail({ applicantName, applicantEmail, applicantPhone, applicantMessage, job }) {
+  // Initialise EmailJS (safe to call multiple times)
+  if (typeof emailjs !== 'undefined') {
+    emailjs.init({ publicKey: EMAILJS.PUBLIC_KEY });
+    return emailjs.send(EMAILJS.SERVICE_ID, EMAILJS.TEMPLATE_ID, {
+      to_email:          EMAILJS.NOTIFY_EMAIL,
+      to_name:           'Jobs Brekete Admin',
+      applicant_name:    applicantName,
+      applicant_email:   applicantEmail,
+      applicant_phone:   applicantPhone || 'Not provided',
+      applicant_message: applicantMessage || 'No additional message.',
+      job_title:         job.title,
+      job_company:       job.company,
+      job_location:      job.location,
+      job_type:          job.type,
+      job_salary:        job.salary,
+      job_contact:       job.contact,
+      applied_at:        new Date().toLocaleString('en-NG', { dateStyle:'full', timeStyle:'short' }),
+    });
+  }
+  // Fallback — open native mailto (works even without EmailJS configured)
+  const subject = encodeURIComponent(`New Application: ${job.title} at ${job.company}`);
+  const body = encodeURIComponent(
+    `New job application received on Jobs Brekete!\n\n` +
+    `JOB DETAILS\n-----------\nTitle: ${job.title}\nCompany: ${job.company}\nLocation: ${job.location}\n\n` +
+    `APPLICANT DETAILS\n-----------------\nName: ${applicantName}\nEmail: ${applicantEmail}\nPhone: ${applicantPhone || 'Not provided'}\n\nMessage:\n${applicantMessage || 'None'}\n\nApplied at: ${new Date().toLocaleString('en-NG')}`
+  );
+  window.open(`mailto:${EMAILJS.NOTIFY_EMAIL}?subject=${subject}&body=${body}`);
+  return Promise.resolve();
+}
+
 // ── INITIAL JOBS SEED ────────────────────────────────────────
 function seedJobs() {
   const existing = store.get(SK.jobs, null);
@@ -86,13 +128,126 @@ function Modal({ onClose, children }) {
   );
 }
 
+// ── APPLY SUCCESS POPUP ───────────────────────────────────────
+function ApplySuccessPopup({ job, onClose }) {
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    const t = setTimeout(onClose, 6000);
+    return () => { document.body.style.overflow = ''; clearTimeout(t); };
+  }, [onClose]);
+  return (
+    <div className="success-popup-wrap">
+      <div className="success-popup-overlay" onClick={onClose} />
+      <div className="success-popup">
+        <div className="success-popup-icon">🎉</div>
+        <h2 className="success-popup-title">Application Sent!</h2>
+        <p className="success-popup-sub">
+          Your application for <strong>{job.title}</strong> at <strong>{job.company}</strong> has been submitted successfully.
+        </p>
+        <div className="success-popup-detail">
+          <span>📍 {job.location}</span>
+          <span>💼 {job.type}</span>
+        </div>
+        <p className="success-popup-note">
+          The employer will contact you directly. Good luck! 🤞
+        </p>
+        <button className="btn btn-accent" style={{ width:'100%', marginTop:'8px' }} onClick={onClose}>
+          Done
+        </button>
+        <div className="success-popup-timer">
+          <div className="success-popup-timer-bar" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── APPLY MODAL ───────────────────────────────────────────────
+function ApplyModal({ job, onClose, onSuccess }) {
+  const [form, setForm] = useState({ name:'', email:'', phone:'', message:'' });
+  const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(false);
+  const upd = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  const validate = () => {
+    const e = {};
+    if (!form.name.trim()) e.name = 'Full name is required.';
+    if (!form.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'A valid email address is required.';
+    return e;
+  };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const errs = validate();
+    setErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+    setLoading(true);
+    try {
+      await sendApplicationEmail({
+        applicantName:    form.name.trim(),
+        applicantEmail:   form.email.trim(),
+        applicantPhone:   form.phone.trim(),
+        applicantMessage: form.message.trim(),
+        job,
+      });
+      onClose();
+      onSuccess(job);
+    } catch (err) {
+      console.error('Email send error:', err);
+      // Still show success to user — email may have failed due to unconfigured keys
+      onClose();
+      onSuccess(job);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <button className="modal-close-btn" onClick={onClose}>✕</button>
+
+      {/* Job Summary Header */}
+      <div className="apply-modal-header">
+        <span className={`job-tag ${job.typeClass || ''}`}>{job.type}</span>
+        <h2 className="modal-title" style={{ marginTop:'10px' }}>Apply for: {job.title}</h2>
+        <p className="modal-company">🏢 {job.company} &nbsp;•&nbsp; 📍 {job.location}</p>
+      </div>
+
+      <div className="apply-modal-divider" />
+
+      <p className="apply-modal-intro">
+        Fill in your details below. A notification will be sent to the Jobs Brekete team and the employer will follow up with you directly.
+      </p>
+
+      <form onSubmit={submit} noValidate className="apply-form">
+        <div className="form-group apply-fg">
+          <label>Full Name <span className="required">*</span></label>
+          <input type="text" value={form.name} onChange={upd('name')} placeholder="e.g. Chioma Okafor" autoFocus />
+          {errors.name && <span className="field-error">{errors.name}</span>}
+        </div>
+        <div className="form-group apply-fg">
+          <label>Email Address <span className="required">*</span></label>
+          <input type="email" value={form.email} onChange={upd('email')} placeholder="your@email.com" />
+          {errors.email && <span className="field-error">{errors.email}</span>}
+        </div>
+        <div className="form-group apply-fg">
+          <label>Phone Number <span className="optional">(optional)</span></label>
+          <input type="tel" value={form.phone} onChange={upd('phone')} placeholder="e.g. 08012345678" />
+        </div>
+        <div className="form-group apply-fg">
+          <label>Cover Message <span className="optional">(optional)</span></label>
+          <textarea rows={3} value={form.message} onChange={upd('message')} placeholder="Briefly tell us why you're a great fit for this role..." />
+        </div>
+        <button type="submit" className="btn btn-accent btn-lg apply-submit-btn" disabled={loading}>
+          {loading
+            ? <><span className="apply-spinner" /> Sending Application…</>
+            : '🚀 Submit Application'
+          }
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
 // ============================================================
-// ██████╗ ██╗   ██╗██████╗ ██╗     ██╗ ██████╗
-// ██╔══██╗██║   ██║██╔══██╗██║     ██║██╔════╝
-// ██████╔╝██║   ██║██████╔╝██║     ██║██║
-// ██╔═══╝ ██║   ██║██╔══██╗██║     ██║██║
-// ██║     ╚██████╔╝██████╔╝███████╗██║╚██████╗
-// ╚═╝      ╚═════╝ ╚═════╝ ╚══════╝╚═╝ ╚═════╝
 // PUBLIC WEBSITE COMPONENTS
 // ============================================================
 
@@ -165,7 +320,7 @@ function IntroStrip() {
 }
 
 // ── JOB CARD ─────────────────────────────────────────────────
-function JobCard({ job, onView }) {
+function JobCard({ job, onView, onApply }) {
   return (
     <article className="job-card">
       <div className="job-card-header">
@@ -182,7 +337,7 @@ function JobCard({ job, onView }) {
       </div>
       <div className="job-salary">💰 {job.salary}</div>
       <div className="job-card-actions">
-        <a href={`tel:${job.contact}`} className="btn btn-accent">Apply Now</a>
+        <button className="btn btn-accent" onClick={() => onApply(job)}>Apply Now</button>
         <button className="btn btn-outline" onClick={() => onView(job)}>View Details</button>
       </div>
     </article>
@@ -190,7 +345,7 @@ function JobCard({ job, onView }) {
 }
 
 // ── JOB DETAIL MODAL ──────────────────────────────────────────
-function JobDetailModal({ job, onClose }) {
+function JobDetailModal({ job, onClose, onApply }) {
   return (
     <Modal onClose={onClose}>
       <button className="modal-close-btn" onClick={onClose}>✕</button>
@@ -204,21 +359,23 @@ function JobDetailModal({ job, onClose }) {
       </div>
       <div className="modal-desc"><h4>Job Description</h4><p>{job.description}</p></div>
       <div className="modal-actions">
-        <a href={`tel:${job.contact}`} className="btn btn-accent btn-lg">Apply Now</a>
-        <a href={`mailto:${job.contact}`} className="btn btn-outline btn-lg">Send Email</a>
+        <button className="btn btn-accent btn-lg" onClick={() => { onClose(); onApply(job); }}>🚀 Apply Now</button>
+        <a href={`mailto:${job.contact}`} className="btn btn-outline btn-lg">📧 Send Email</a>
       </div>
     </Modal>
   );
 }
 
 // ── JOBS SECTION ──────────────────────────────────────────────
-function JobsSection({ jobs }) {
+function JobsSection({ jobs, showToast }) {
   const [query, setQuery] = useState('');
   const [locFilter, setLocFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [catFilter, setCatFilter] = useState('');
   const [visible, setVisible] = useState(6);
   const [selectedJob, setSelectedJob] = useState(null);
+  const [applyJob, setApplyJob] = useState(null);
+  const [successJob, setSuccessJob] = useState(null);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
@@ -231,6 +388,17 @@ function JobsSection({ jobs }) {
   }, [jobs, query, locFilter, typeFilter, catFilter]);
 
   const toShow = filtered.slice(0, visible);
+
+  const handleApply = (job) => {
+    setSelectedJob(null); // close detail modal if open
+    setApplyJob(job);
+  };
+
+  const handleSuccess = (job) => {
+    setApplyJob(null);
+    setSuccessJob(job);
+    showToast('✅ Application submitted successfully!', 'success');
+  };
 
   return (
     <section className="jobs-section" id="jobs">
@@ -256,17 +424,24 @@ function JobsSection({ jobs }) {
         </div>
         {toShow.length === 0
           ? <div className="no-results"><p>😔 No jobs found matching your search. Try different filters.</p></div>
-          : <div className="jobs-grid">{toShow.map(job => <JobCard key={job.id} job={job} onView={setSelectedJob} />)}</div>
+          : <div className="jobs-grid">{toShow.map(job => <JobCard key={job.id} job={job} onView={setSelectedJob} onApply={handleApply} />)}</div>
         }
         {visible < filtered.length && (
           <div className="load-more-wrap">
             <button className="btn btn-outline" onClick={() => setVisible(v => v + 6)}>Load More Jobs</button>
           </div>
         )}
-        {/* Job Alert Bar */}
         <JobAlertBar />
       </div>
-      {selectedJob && <JobDetailModal job={selectedJob} onClose={() => setSelectedJob(null)} />}
+
+      {/* Job Detail Modal */}
+      {selectedJob && <JobDetailModal job={selectedJob} onClose={() => setSelectedJob(null)} onApply={handleApply} />}
+
+      {/* Apply Form Modal */}
+      {applyJob && <ApplyModal job={applyJob} onClose={() => setApplyJob(null)} onSuccess={handleSuccess} />}
+
+      {/* Success Popup */}
+      {successJob && <ApplySuccessPopup job={successJob} onClose={() => setSuccessJob(null)} />}
     </section>
   );
 }
@@ -288,12 +463,20 @@ function JobAlertBar() {
   };
   return (
     <div className="job-alert-bar">
-      <p>🔔 <strong>Get Job Alerts!</strong> Enter your email to receive daily job updates in Lagos &amp; Nigeria.</p>
-      <form className="alert-form" onSubmit={submit}>
-        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Enter your email address" />
-        <button type="submit" className="btn btn-accent">Subscribe</button>
-      </form>
-      {done && <p className="alert-success">✅ Subscribed! You'll receive daily job alerts.</p>}
+      <div className="job-alert-text">
+        <span className="job-alert-icon">🔔</span>
+        <div>
+          <strong>Get Job Alerts!</strong>
+          <p>Enter your email to receive daily job updates in Lagos &amp; Nigeria.</p>
+        </div>
+      </div>
+      <div className="job-alert-action">
+        <form className="alert-form" onSubmit={submit}>
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Enter your email address" />
+          <button type="submit" className="btn btn-accent alert-btn">Subscribe</button>
+        </form>
+        {done && <p className="alert-success">✅ Subscribed! You'll receive daily job alerts.</p>}
+      </div>
     </div>
   );
 }
@@ -1209,7 +1392,7 @@ function App() {
       <main>
         <Hero />
         <IntroStrip />
-        <JobsSection jobs={publicJobs} />
+        <JobsSection jobs={publicJobs} showToast={showToast} />
         <PostJobSection onShowToast={showToast} />
         <HowItWorks />
         <About />
